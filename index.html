@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<title>いぬリバーシ</title>
+<style>
+*{
+    box-sizing:border-box;
+    -webkit-tap-highlight-color:transparent;
+}
+html,body{
+    margin:0;
+    width:100%;
+    height:100%;
+    overflow:hidden;
+    touch-action:none;
+    font-family:sans-serif;
+    background:#f6f3ea;
+}
+.screen{
+    width:100%;
+    height:100vh;
+    display:none;
+    flex-direction:column;
+    justify-content:center;
+    align-items:center;
+    padding:12px;
+}
+.screen.active{
+    display:flex;
+}
+h1{
+    margin:10px 0;
+    text-align:center;
+}
+p{
+    text-align:center;
+    line-height:1.5;
+}
+button{
+    min-width:180px;
+    min-height:56px;
+    border:none;
+    border-radius:14px;
+    background:#ff9800;
+    color:#fff;
+    font-size:20px;
+    font-weight:bold;
+    margin-top:12px;
+}
+#gameScreen{
+    justify-content:flex-start;
+}
+.topbar{
+    width:100%;
+    max-width:500px;
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    font-size:22px;
+    font-weight:bold;
+    margin:10px 0;
+}
+#turnText{
+    margin-bottom:8px;
+    font-size:18px;
+    font-weight:bold;
+}
+#board{
+    width:min(92vw,92vh - 180px,500px);
+    height:min(92vw,92vh - 180px,500px);
+    background:#2e7d32;
+    display:grid;
+    grid-template-columns:repeat(8,1fr);
+    grid-template-rows:repeat(8,1fr);
+    border:5px solid #1b5e20;
+}
+.cell{
+    border:1px solid rgba(255,255,255,.25);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    font-size:clamp(18px,3.8vw,28px);
+}
+.cell.valid{
+    background:rgba(255,255,255,.18);
+}
+.rank{
+    font-size:34px;
+    font-weight:bold;
+    color:#ff5722;
+}
+#kingDog{
+    font-size:90px;
+    margin:10px 0;
+    display:none;
+    animation:bounce 1s infinite;
+}
+#kingMessage{
+    font-size:22px;
+    font-weight:bold;
+    color:#e65100;
+    display:none;
+    text-align:center;
+}
+@keyframes bounce{
+    0%,100%{transform:translateY(0);}
+    50%{transform:translateY(-12px);}
+}
+</style>
+</head>
+<body>
+
+<div id="startScreen" class="screen active">
+    <h1>🐶 いぬリバーシ 🐶</h1>
+    <p>
+        いぬチーム(🐶)で遊ぼう！<br>
+        光っているマスをタップして置こう。<br>
+        30秒でできるだけ多くのいぬを増やそう！
+    </p>
+    <button id="startBtn">スタート</button>
+</div>
+
+<div id="gameScreen" class="screen">
+    <div class="topbar">
+        <div>スコア:<span id="score">2</span></div>
+        <div>⏰<span id="time">30</span></div>
+    </div>
+    <div id="turnText">あなた:🐶</div>
+    <div id="board"></div>
+</div>
+
+<div id="resultScreen" class="screen">
+    <h1>結果発表</h1>
+
+    <div id="kingDog">👑🐶</div>
+    <div id="kingMessage">王様いぬが登場！おめでとう！</div>
+
+    <h2>最終スコア</h2>
+    <div id="finalScore" style="font-size:48px;font-weight:bold;">0</div>
+    <div id="rank" class="rank">C</div>
+    <button id="retryBtn">もう一度遊ぶ</button>
+</div>
+
+<script>
+const startScreen=document.getElementById("startScreen");
+const gameScreen=document.getElementById("gameScreen");
+const resultScreen=document.getElementById("resultScreen");
+
+const boardEl=document.getElementById("board");
+const scoreEl=document.getElementById("score");
+const timeEl=document.getElementById("time");
+const finalScoreEl=document.getElementById("finalScore");
+const rankEl=document.getElementById("rank");
+const kingDog=document.getElementById("kingDog");
+const kingMessage=document.getElementById("kingMessage");
+
+let board=[];
+let timer=30;
+let interval=null;
+
+const PLAYER="🐶";
+const CPU="🐕";
+
+const dirs=[
+[-1,-1],[-1,0],[-1,1],
+[0,-1],[0,1],
+[1,-1],[1,0],[1,1]
+];
+
+function show(screen){
+    [startScreen,gameScreen,resultScreen].forEach(s=>s.classList.remove("active"));
+    screen.classList.add("active");
+}
+
+function initGame(){
+    board=Array(8).fill().map(()=>Array(8).fill(""));
+
+    board[3][3]=CPU;
+    board[3][4]=PLAYER;
+    board[4][3]=PLAYER;
+    board[4][4]=CPU;
+
+    timer=30;
+    timeEl.textContent=timer;
+
+    kingDog.style.display="none";
+    kingMessage.style.display="none";
+
+    drawBoard();
+    updateScore();
+
+    clearInterval(interval);
+
+    interval=setInterval(()=>{
+        timer--;
+        timeEl.textContent=timer;
+
+        if(timer<=0){
+            endGame();
+        }
+    },1000);
+}
+
+function inside(r,c){
+    return r>=0 && r<8 && c>=0 && c<8;
+}
+
+function getFlips(r,c,piece){
+    if(board[r][c]!=="") return [];
+
+    const enemy=piece===PLAYER?CPU:PLAYER;
+    let all=[];
+
+    dirs.forEach(d=>{
+        let rr=r+d[0];
+        let cc=c+d[1];
+        let temp=[];
+
+        while(
+            inside(rr,cc) &&
+            board[rr][cc]===enemy
+        ){
+            temp.push([rr,cc]);
+            rr+=d[0];
+            cc+=d[1];
+        }
+
+        if(
+            temp.length>0 &&
+            inside(rr,cc) &&
+            board[rr][cc]===piece
+        ){
+            all=all.concat(temp);
+        }
+    });
+
+    return all;
+}
+
+function validMoves(piece){
+    const arr=[];
+
+    for(let r=0;r<8;r++){
+        for(let c=0;c<8;c++){
+            if(getFlips(r,c,piece).length){
+                arr.push({r,c});
+            }
+        }
+    }
+
+    return arr;
+}
+
+function placePiece(r,c,piece){
+    const flips=getFlips(r,c,piece);
+
+    if(!flips.length) return false;
+
+    board[r][c]=piece;
+
+    flips.forEach(v=>{
+        board[v[0]][v[1]]=piece;
+    });
+
+    return true;
+}
+
+function drawBoard(){
+    boardEl.innerHTML="";
+
+    const valids=validMoves(PLAYER);
+
+    for(let r=0;r<8;r++){
+        for(let c=0;c<8;c++){
+
+            const cell=document.createElement("div");
+            cell.className="cell";
+
+            if(valids.some(v=>v.r===r && v.c===c)){
+                cell.classList.add("valid");
+            }
+
+            cell.textContent=board[r][c];
+
+            cell.addEventListener("click",()=>{
+                playerMove(r,c);
+            });
+
+            boardEl.appendChild(cell);
+        }
+    }
+}
+
+function playerMove(r,c){
+
+    if(timer<=0) return;
+
+    if(!placePiece(r,c,PLAYER)) return;
+
+    updateScore();
+    drawBoard();
+
+    setTimeout(cpuMove,250);
+}
+
+function cpuMove(){
+
+    const moves=validMoves(CPU);
+
+    if(moves.length===0){
+        drawBoard();
+        return;
+    }
+
+    const move=moves[Math.floor(Math.random()*moves.length)];
+
+    placePiece(move.r,move.c,CPU);
+
+    updateScore();
+    drawBoard();
+}
+
+function updateScore(){
+
+    let player=0;
+
+    for(let r=0;r<8;r++){
+        for(let c=0;c<8;c++){
+            if(board[r][c]===PLAYER){
+                player++;
+            }
+        }
+    }
+
+    scoreEl.textContent=player;
+}
+
+function endGame(){
+
+    clearInterval(interval);
+
+    let player=0;
+    let cpu=0;
+
+    for(let r=0;r<8;r++){
+        for(let c=0;c<8;c++){
+
+            if(board[r][c]===PLAYER) player++;
+            if(board[r][c]===CPU) cpu++;
+
+        }
+    }
+
+    finalScoreEl.textContent=player;
+
+    let rank="C";
+
+    if(player>=40) rank="S";
+    else if(player>=30) rank="A";
+    else if(player>=20) rank="B";
+
+    rankEl.textContent="ランク "+rank;
+
+    if(player>cpu){
+        kingDog.style.display="block";
+        kingMessage.style.display="block";
+    }
+
+    show(resultScreen);
+}
+
+document.getElementById("startBtn").addEventListener("click",()=>{
+    show(gameScreen);
+    initGame();
+});
+
+document.getElementById("retryBtn").addEventListener("click",()=>{
+    show(gameScreen);
+    initGame();
+});
+</script>
+
+</body>
+</html>
